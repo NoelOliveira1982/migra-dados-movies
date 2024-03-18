@@ -1,153 +1,99 @@
-import { isValid } from 'date-fns';
-import * as ExcelJS from 'exceljs';
-import * as fs from 'fs';
+import fs from 'fs';
+import csv from 'csv-parser';
+import axios, { AxiosInstance, AxiosResponse } from 'axios';
 
-import axios from "axios";
+interface Movie {
+  title: string;
+  studio: string; // Nome do estúdio
+  audience_score: string;
+  year: string;
+  genre: string; // Nome do gênero
+}
 
-const baseUrl = "http://127.0.0.1:3000/";
+interface CreateMovieDto {
+  title: string;
+  audience_score: string;
+  year: number;
+  id_studio: string;
+  id_genre: string;
+}
 
-export const http = axios.create({
+interface Studio {
+  id_studio: string;
+  studio: string;
+}
+
+interface Genre {
+  id_genre: string;
+  genre: string;
+}
+
+const baseUrl = "http://localhost:3001/";
+
+const http: AxiosInstance = axios.create({
   baseURL: baseUrl,
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-type IPlanilhaType = {
-  [key: string]: number;
-};
+const movies: Movie[] = [];
 
-const IPlanilha: IPlanilhaType = {
-  'Depositante': 0,
-  'Número': 1,
-  'Centros': 2,
-  'Título': 3,
-  'Data do Depósito': 4,
-  'Data da Publicação': 5,
-  'Concessão': 6,
-  'IPC': 8,
-  'Categorias': 7,
-  'Inventor 1': 10,
-  'Inventor 2': 11,
-  'Inventor 3': 12,
-  'Inventor 4': 13,
-  'Inventor 5': 14,
-  'Inventor 6': 15,
-  'Inventor 7': 16,
-  'Inventor 8': 17,
-  'Inventor 9': 18,
-  'Inventor 10': 19,
-  'Inventor 11': 20,
-  'Inventor 12': 21,
-  'Inventor 13': 22,
-  'Inventor 14': 23,
-  'Inventor 15': 24,
-  'Inventor 16': 25,
-  'Procurador': 26,
-  'Resumo': 27,
-}
-
-export interface Categoria {
-  id_categoria: string;
-  descricao: string;
-}
-
-export interface Instituicao {
-  instituicao: string;
-  centros: string;
-}
-
-export interface Inventor {
-  nome: string;
-}
-
-export interface Patente {
-  num_patente: string;
-  titulo: string;
-  IPC: string;
-  descricao: string;
-  data_deposito: Date | null;
-  data_publicacao: Date | null;
-  data_concesao: Date | null;
-  instituicao: Instituicao;
-  inventores: Inventor[];
-  categorias: Categoria[];
-}
-
-export interface Procurador {
-  nome: string;
-}
-
-async function readExcel(filePath: string): Promise<any> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-
-  // Supondo que a planilha tenha apenas uma folha
-  const worksheet = workbook.worksheets[0];
-
-  // Lê os dados da planilha e armazena em uma matriz
-  const data: any[][] = [];
-  worksheet.eachRow({ includeEmpty: true }, (row) => {
-    const rowData: any[] = [];
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      rowData.push(cell.value);
+fs.createReadStream('movies.csv')
+  .pipe(csv())
+  .on('data', (row: any) => {
+    movies.push({
+      title: row.Film,
+      studio: row['Lead Studio'],
+      audience_score: row['Audience score %'],
+      year: row.Year,
+      genre: row.Genre,
     });
-    data.push(rowData);
+  })
+  .on('end', () => {
+    // console.log('CSV file successfully processed.');
+    // console.log(movies);
+    createMovies();
   });
 
-  return data;
-}
+async function createMovies(): Promise<void> {
+  try {
+    // Obter os IDs dos gêneros e estúdios
 
-// Exemplo de uso
-const filePath = 'planilha.xlsx';
-run();
+    const genres: Record<string, string> = {};
+    let studios: Record<string, string> = {};
+    // movies.forEach((movie) => {
+    //   http.post<Genre>('/genre', { genre: movie.genre }).then(data => { genres[data.data.genre] = data.data.id }).catch(e => console.log(e));
+    // });
 
-async function run() {
-  readExcel(filePath)
-    .then(async (data) => {
-      const responses: Patente[] = [];
-      const MAX_ROWS = 210;
-      for (let i = 1; i < MAX_ROWS - 1; i++) {
+    // movies.forEach((movie) => {
+    //   http.post<Studio>('/studio', { studio: movie.studio }).then(data => { studios[data.data.studio] = data.data.id }).catch(e => console.log(e))
+    // });
 
-        const inventores: Inventor[] = [];
-        for (let index = 1; index <= 16; index++) {
-          let chave: keyof IPlanilhaType = `Inventor ${index}`;
-          if (data[i][IPlanilha[chave]] !== null) {
-            inventores.push({ nome: data[i][IPlanilha[chave]].trim() });
-          }
-        }
+    http.get<Genre[]>('/genre').then(async (data) => {
 
-        const categorias: Categoria[] = await Promise.all(
-          data[i][IPlanilha['Categorias']].split('; ').map(async (categoria: string) => {
-            categoria = categoria.replace('; ', '').replace(';', '');
-            let data: any = await http.get<Categoria>(`/categoria/${categoria}`).then(data => data.data);
-            if (!data) {
-              data = await http.post<Categoria>('/categoria', { descricao: categoria }).then(data => data.data);
-            }
-            return data;
-          })
-        );
+      data.data.forEach(genre => { genres[genre.genre] = genre.id_genre });
 
-        const response: Patente = {
-          titulo: data[i][IPlanilha['Título']],
-          categorias: categorias,
-          descricao: data[i][IPlanilha['Resumo']],
-          instituicao: { centros: data[i][IPlanilha['Centros']], instituicao: data[i][IPlanilha['Depositante']] },
-          inventores: inventores,
-          IPC: data[i][IPlanilha['IPC']],
-          num_patente: data[i][IPlanilha['Número']],
-          data_concesao: isValid(new Date(data[i][IPlanilha['Concessão']])) ? new Date(data[i][IPlanilha['Concessão']]) : null,
-          data_deposito: isValid(new Date(data[i][IPlanilha['Data do Depósito']])) ? new Date(data[i][IPlanilha['Concessão']]) : null,
-          data_publicacao: isValid(new Date(data[i][IPlanilha['Concessão']])) ? new Date(data[i][IPlanilha['Data da Publicação']]) : null,
-        };
-        responses.push(response);
-      }
+      http.get<Studio[]>('/studio').then(async (dataStudio) => {
 
-      responses.forEach(async response => {
-        await http.post('/patente', response).catch(_ => { return });
+        dataStudio.data.forEach(studio => { studios[studio.studio] = studio.id_studio });
+
+        const moviesToCreate: CreateMovieDto[] = movies.map(movie => ({
+          title: movie.title,
+          audience_score: movie.audience_score,
+          year: parseInt(movie.year),
+          id_studio: studios[movie.studio],
+          id_genre: genres[movie.genre],
+        }));
+
+        moviesToCreate.forEach(async (movieToCreate) => {
+          const createMoviesResponse: AxiosResponse<void> = await http.post('/movie', movieToCreate);
+          console.log('Filmes criados:', createMoviesResponse.data);
+        })
+
       });
-    })
-    .catch((error) => {
-      console.error('Erro ao ler a planilha:', error);
     });
+  } catch (error) {
+    console.error('Erro ao criar filmes:', error);
+  }
 }
